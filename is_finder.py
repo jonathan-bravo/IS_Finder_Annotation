@@ -316,7 +316,7 @@ def main():
     outfile = args.o
     data_col = args.c
     chunk_size = args.k
-    Entrez.email = args.e #"hakmonkey@gmail.com"
+    Entrez.email = args.e
     gen_xlsx(outfile)
     aclame_id_chunk_list = gen_chunk_list(infile, data_col, chunk_size)
     aclame_to_geneid_df = pd.read_parquet('aclame_genes_plasmids_0.4.parquet', engine='pyarrow')
