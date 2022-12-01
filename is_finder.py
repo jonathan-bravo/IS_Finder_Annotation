@@ -10,6 +10,8 @@ import pandas as pd
 import math
 import argparse
 from tqdm import tqdm
+from sys import platform
+import subprocess
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options as FirefoxOptions
 from selenium.webdriver.common.by import By
@@ -200,10 +202,21 @@ def parse_sequences(entrez_data, info_df):
 def is_browser(seq_list):
     is_finder_results = []
 
+    # need to modify the windows path, but don't have windows machine to test currently
+    if platform == "win32":
+        cmd = ""
+        conda_path = subprocess.run(["powershell", "-Command", cmd], capture_output=True)
+        binary_path = r'\bin\FirefoxApp\Contents\MacOS\firefox-bin'
+    else:
+        cmd = "conda info --envs | grep 'genomics' | awk '{print $(NF)}'"
+        conda_path = subprocess.run([cmd], shell=True, capture_output=True).stdout.decode('ascii').strip()
+        binary_path = '/bin/FirefoxApp/Contents/MacOS/firefox-bin'
+
     firefox_options = FirefoxOptions()
     firefox_options.add_argument("--headless")
-    firefox_options.binary_location = r'/Users/johnny/opt/anaconda3/envs/genomics/bin/FirefoxApp/Contents/MacOS/firefox-bin' # figure out how to grab this automatically somehow
+    firefox_options.binary_location = f'{conda_path}{binary_path}'
     driver = webdriver.Firefox(options=firefox_options)
+    wait_time = 30
 
     for seq in tqdm(seq_list):
         if seq == 'BLANK':
@@ -219,11 +232,11 @@ def is_browser(seq_list):
         else:    
             url = "https://www-is.biotoul.fr/blast.php"
             driver.get(url)
-            seq_input_box = WebDriverWait(driver, 20, poll_frequency=0.5).until(EC.presence_of_element_located((By.CLASS_NAME, "seq")))
+            seq_input_box = WebDriverWait(driver, wait_time, poll_frequency=1).until(EC.presence_of_element_located((By.CLASS_NAME, "seq")))
             blast_button = driver.find_element(By.CLASS_NAME, "boutonblast")
             seq_input_box.send_keys(seq)
             blast_button.click()
-            results_table = WebDriverWait(driver, 20, poll_frequency=0.5).until(EC.presence_of_element_located((By.TAG_NAME, "table")))
+            results_table = WebDriverWait(driver, wait_time, poll_frequency=1).until(EC.presence_of_element_located((By.TAG_NAME, "table")))
             rows = results_table.find_elements(By.TAG_NAME, "tr")
             row1_html = rows[1].get_attribute('innerHTML').split('</td>')
             row1 = [x[4:] for x in row1_html]
