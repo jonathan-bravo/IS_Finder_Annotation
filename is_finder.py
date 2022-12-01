@@ -8,11 +8,9 @@
 from Bio import Entrez
 import pandas as pd
 import math
+import argparse
 from tqdm import tqdm
 from selenium import webdriver
-#from selenium.webdriver.chrome.service import Service
-#from webdriver_manager.chrome import ChromeDriverManager
-#from selenium.webdriver.firefox.service import Service
 from selenium.webdriver.firefox.options import Options as FirefoxOptions
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.wait import WebDriverWait
@@ -20,63 +18,116 @@ from selenium.webdriver.support import expected_conditions as EC
 import xml.etree.ElementTree as ET
 
 
-# function to chunk the data into smaller requests
+def parse_inputs():
+    parser = argparse.ArgumentParser(
+        description = ''
+    )
+    parser.add_argument(
+        '-i',
+        metavar = '--IN_FILE',
+        type = str,
+        help = 'The excel file containing the ACLAME IDs',
+        required = True
+    )
+    parser.add_argument(
+        '-c',
+        metavar = '--COL',
+        type = int,
+        help = 'The column containing the ACLAME IDs',
+        default = 0
+    )
+    parser.add_argument(
+        '-k',
+        metavar = '--CHUNK_SIZE',
+        type = int,
+        help = 'The number of genes to process at once',
+        default = 300
+    )
+    parser.add_argument(
+        '-e',
+        metavar = '--EMAIL',
+        type = str,
+        help = 'The email for use with Entrez',
+        required = True
+    )
+    parser.add_argument(
+        '-o',
+        metavar = '--OUTFILE',
+        type = str,
+        help = 'The column containing the ACLAME IDs',
+        default = 'IS_finder_results.xlsx'
+    )
+    return parser.parse_args()
+
+
 def divide_chunks(l, n):
-    # looping till length l
     for i in range(0, len(l), n):
         yield l[i:i + n]
 
 
-# read in the ids that need to be translated - turn into arg later
-telseq_df = pd.read_excel("WORKER_MOBILOME_REMAINING_PLASMID_PROPHAGE_IS_TE_PARSING.xlsx")
-aclame_id_strings = [id_string for id_string in telseq_df['Genes']]
+def gen_xlsx(outfile):
+    headers_df = pd.DataFrame(columns=[
+        'ACLAME ID',
+        'Cross-references',
+        'Accession Id',
+        'Start',
+        'Stop',
+        'Gene Description',
+        'Locus',
+        'Sequences producing significant alignments',
+        'IS Family',
+        'Group',
+        'Origin',
+        'Score (bits)',
+        'E. value',
+        'Final Call'
+    ])
+    with pd.ExcelWriter(outfile, mode='w') as writer:
+        headers_df.to_excel(writer, index=False)
+    
 
-# read in the translation "database" - Turn into internal data later?
-#aclame_to_geneid_df = pd.read_csv("aclame_genes_plasmids_0.4.csv")
-aclame_to_geneid_df = pd.read_parquet('example_pa.parquet', engine='pyarrow')
+def gen_chunk_list(infile, data_col, chunk_size):
+    telseq_df = pd.read_excel(infile)
+    aclame_id_strings = [id_string for id_string in telseq_df.iloc[:, data_col]]
+    aclame_id_chunk_list = list(divide_chunks(aclame_id_strings, chunk_size))
 
-# chunk the data into smaller requests
-aclame_id_chunk_list = list(divide_chunks(aclame_id_strings, 500))
+    print(f'Chunked {len(aclame_id_strings)} IDs into {len(aclame_id_chunk_list)} chunks')
 
-print(f'Chunked {len(aclame_id_strings)} IDs into {len(aclame_id_chunk_list)} chunks')
+    return aclame_id_chunk_list
 
-# set email for entrez - turn into arg later
-Entrez.email = "hakmonkey@gmail.com"
 
-for i, chunk in enumerate(aclame_id_chunk_list):
-    aclame_to_geneid_df_subset = aclame_to_geneid_df[aclame_to_geneid_df['ACLAME ID'].isin(chunk)]
-    gene_ids_strings = aclame_to_geneid_df_subset['Cross-references']
-
-    # start the info database
-    info_df = pd.DataFrame()
-    info_df['ACLAME ID'] = aclame_to_geneid_df_subset['ACLAME ID']
-    info_df['Cross-references'] = aclame_to_geneid_df_subset['Cross-references']
-    info_df['Cross-references'] = info_df['Cross-references'].apply(lambda x: x.split(':')[-1])
-    info_df = info_df.reset_index(drop=True)
-
-    # get list of gene ids
-    gene_ids_list = [gene_ids_string.split(':')[-1] for gene_ids_string in gene_ids_strings]
+def fetch_gene_info(gene_ids_list):
     gene_ids = ','.join(gene_ids_list)
-    print(f'Got {len(gene_ids_list)} genes for chunk: {i}')
 
-    print(f'Fetching gene info for chunk: {i}')
-
-    # fetch gene info
     handle = Entrez.efetch(db="gene", retmode="xml", id=gene_ids)
     records = handle.read()
     handle.close()
 
-    print(f'Parsing gene info for chunk: {i}')
+    entrez_data = ET.fromstring(records.decode('ascii'))
 
+    return entrez_data
+
+
+def fetch_sequences(accession_ids_list):
+    accession_ids = ','.join(accession_ids_list)
+
+    handle = Entrez.efetch(db="nucleotide", rettype="fasta", retmode="xml", id=accession_ids)
+    records = handle.read()
+    handle.close()
+
+    entrez_data = ET.fromstring(records.decode('ascii'))
+
+    return entrez_data
+
+
+def parse_gene_info(entrez_data):
     accession_ids_list = []
     start_list = []
     stop_list = []
     descript_list = []
     locus_list = []
 
-    # This is the raw parsing of the xml data
-    entrez_data = ET.fromstring(records.decode('ascii'))
-    for gene in tqdm(entrez_data):
+    for gene in entrez_data:
         if gene.tag != 'Error':
             accession_val = 'NR_182530'
             version_val = 1
@@ -121,31 +172,20 @@ for i, chunk in enumerate(aclame_id_chunk_list):
         descript_list.append(descript_val)
         locus_list.append(gene_locus_val)
 
+    return (
+        accession_ids_list,
+        start_list,
+        stop_list,
+        descript_list,
+        locus_list
+    )
 
 
-    info_df['Accession Id'] = accession_ids_list
-    info_df['Start'] = start_list
-    info_df['Stop'] = stop_list
-    info_df['Gene Description'] = descript_list
-    info_df['Locus'] = locus_list
-
-
-    accession_ids = ','.join(accession_ids_list)
-
-    print(f'Fetching fasta sequences info for chunk: {i}')
-
-    handle = Entrez.efetch(db="nucleotide", rettype="fasta", retmode="xml", id=accession_ids)
-    records = handle.read()
-    handle.close()
-
-    entrez_data = ET.fromstring(records.decode('ascii'))
-
-
-
+def parse_sequences(entrez_data, info_df):
     seq_list = []
 
-    for j,seq in enumerate(entrez_data):
-        info_entry = info_df.loc[[j]]
+    for i, seq in enumerate(entrez_data):
+        info_entry = info_df.loc[[i]]
         seq_start = int(info_entry['Start'])
         seq_stop = int(info_entry['Stop']) + 1
         sequence = seq.find('TSeq_sequence').text
@@ -154,27 +194,16 @@ for i, chunk in enumerate(aclame_id_chunk_list):
         else:
             seq_list.append(sequence[seq_start:seq_stop])
 
+    return seq_list
+    
 
-    # IS BROWSER APP
-
+def is_browser(seq_list):
     is_finder_results = []
-
-
-    # TESTING USING FIREFOX INSTEAD BECAUSE CHROME IS UNSTABLE?
-    # chrome_options = webdriver.ChromeOptions()
-    # chrome_options.headless = True
-    # driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
 
     firefox_options = FirefoxOptions()
     firefox_options.add_argument("--headless")
-    firefox_options.binary_location = r'/Users/johnny/opt/anaconda3/envs/genomics/bin/FirefoxApp/Contents/MacOS/firefox-bin'
-
-
+    firefox_options.binary_location = r'/Users/johnny/opt/anaconda3/envs/genomics/bin/FirefoxApp/Contents/MacOS/firefox-bin' # figure out how to grab this automatically somehow
     driver = webdriver.Firefox(options=firefox_options)
-
-
-    print(f'Annotating with ISFinder for chunk: {i}')
-
 
     for seq in tqdm(seq_list):
         if seq == 'BLANK':
@@ -190,11 +219,11 @@ for i, chunk in enumerate(aclame_id_chunk_list):
         else:    
             url = "https://www-is.biotoul.fr/blast.php"
             driver.get(url)
-            seq_input_box = WebDriverWait(driver, 10, poll_frequency=1).until(EC.presence_of_element_located((By.CLASS_NAME, "seq")))
+            seq_input_box = WebDriverWait(driver, 20, poll_frequency=0.5).until(EC.presence_of_element_located((By.CLASS_NAME, "seq")))
             blast_button = driver.find_element(By.CLASS_NAME, "boutonblast")
             seq_input_box.send_keys(seq)
             blast_button.click()
-            results_table = WebDriverWait(driver, 10, poll_frequency=1).until(EC.presence_of_element_located((By.TAG_NAME, "table")))
+            results_table = WebDriverWait(driver, 20, poll_frequency=0.5).until(EC.presence_of_element_located((By.TAG_NAME, "table")))
             rows = results_table.find_elements(By.TAG_NAME, "tr")
             row1_html = rows[1].get_attribute('innerHTML').split('</td>')
             row1 = [x[4:] for x in row1_html]
@@ -214,9 +243,72 @@ for i, chunk in enumerate(aclame_id_chunk_list):
         is_finder_results.append(is_result)
 
     driver.quit()
+    return is_finder_results
 
-    out_df = pd.concat([info_df, pd.DataFrame(is_finder_results)], axis=1)
 
-    out_df.loc[(out_df['Locus'] == 'ERROR') | (out_df['Locus'] == 'Manual'), 'Accession Id'] = 'NC_000000.0'
+def process_chunks(aclame_id_chunk_list, aclame_to_geneid_df, outfile):
+    for i, chunk in enumerate(aclame_id_chunk_list):
+        print(f'Working on chunk: {i}')
 
-    out_df.to_excel('IS_finder_results.xlsx', index=False, sheet_name=i)
+        aclame_to_geneid_df_subset = aclame_to_geneid_df[aclame_to_geneid_df['ACLAME ID'].isin(chunk)]
+        gene_ids_strings = aclame_to_geneid_df_subset['Cross-references']
+
+        info_df = pd.DataFrame()
+        info_df['ACLAME ID'] = aclame_to_geneid_df_subset['ACLAME ID']
+        info_df['Cross-references'] = aclame_to_geneid_df_subset['Cross-references']
+        info_df['Cross-references'] = info_df['Cross-references'].apply(lambda x: x.split(':')[-1])
+        info_df = info_df.reset_index(drop=True)
+
+        gene_ids_list = [gene_ids_string.split(':')[-1] for gene_ids_string in gene_ids_strings]
+
+        entrez_data = fetch_gene_info(gene_ids_list)
+        gene_info = parse_gene_info(entrez_data)
+        accession_ids_list = gene_info[0]
+        start_list = gene_info[1]
+        stop_list = gene_info[2]
+        descript_list = gene_info[3]
+        locus_list = gene_info[4]
+
+
+        info_df['Accession Id'] = accession_ids_list
+        info_df['Start'] = start_list
+        info_df['Stop'] = stop_list
+        info_df['Gene Description'] = descript_list
+        info_df['Locus'] = locus_list
+
+        entrez_data = fetch_sequences(accession_ids_list)
+        seq_list = parse_sequences(entrez_data, info_df)
+
+        is_finder_results = is_browser(seq_list)
+
+        out_df = pd.concat([info_df, pd.DataFrame(is_finder_results)], axis=1)
+
+        out_df.loc[(out_df['Locus'] == 'ERROR') | (out_df['Locus'] == 'Manual'), 'Accession Id'] = 'NC_000000.0'
+
+        write_out(out_df, outfile)
+
+
+def write_out(out_df, outfile):
+    with pd.ExcelWriter(outfile, if_sheet_exists='overlay', mode='a') as writer:
+        out_df.to_excel(
+            writer,
+            index = False,
+            header = False,
+            startrow = writer.sheets['Sheet1'].max_row
+        )
+
+def main():
+    args = parse_inputs()
+    infile = args.i
+    outfile = args.o
+    data_col = args.c
+    chunk_size = args.k
+    Entrez.email = args.e #"hakmonkey@gmail.com"
+    gen_xlsx(outfile)
+    aclame_id_chunk_list = gen_chunk_list(infile, data_col, chunk_size)
+    aclame_to_geneid_df = pd.read_parquet('aclame_genes_plasmids_0.4.parquet', engine='pyarrow')
+    process_chunks(aclame_id_chunk_list, aclame_to_geneid_df, outfile)
+
+
+if __name__ == '__main__':
+    main()
