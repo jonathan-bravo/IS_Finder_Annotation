@@ -28,7 +28,6 @@ class GeneInfo:
     gene_description:str = ''
     locus:str = 'Manual'
 
-
 @dataclass
 class ISBrowserEntry:
     sig_seq:str = ''
@@ -39,15 +38,11 @@ class ISBrowserEntry:
     e_value:str = ''
     final_call:str = 'UNCLASSIFIED'
 
-
 def parse_inputs():
-    parser = argparse.ArgumentParser(
-        description = ''
-    )
+    parser = argparse.ArgumentParser()
     parser.add_argument(
         '-i',
         metavar = '--IN_FILE',
-        type = str,
         help = 'The excel file containing the ACLAME IDs',
         required = True
     )
@@ -68,24 +63,20 @@ def parse_inputs():
     parser.add_argument(
         '-e',
         metavar = '--EMAIL',
-        type = str,
         help = 'The email for use with Entrez',
         required = True
     )
     parser.add_argument(
         '-o',
         metavar = '--OUTFILE',
-        type = str,
         help = 'The column containing the ACLAME IDs',
         default = 'IS_finder_results.xlsx'
     )
     return parser.parse_args()
 
-
 def divide_chunks(l, n):
     for i in range(0, len(l), n):
         yield l[i:i + n]
-
 
 def gen_xlsx(outfile):
     headers_df = pd.DataFrame(columns=[
@@ -107,7 +98,6 @@ def gen_xlsx(outfile):
     with pd.ExcelWriter(outfile, mode='w') as writer:
         headers_df.to_excel(writer, index=False)
     
-
 def gen_chunk_list(infile, data_col, chunk_size):
     telseq_df = pd.read_excel(infile)
     aclame_id_strings = [id_string for id_string in telseq_df.iloc[:, data_col]]
@@ -115,13 +105,11 @@ def gen_chunk_list(infile, data_col, chunk_size):
     print(f'Chunked {len(aclame_id_strings)} IDs into {len(aclame_id_chunk_list)} chunks')
     return aclame_id_chunk_list
 
-
 def fetch_gene_info(gene_ids_list):
     gene_ids = ','.join(gene_ids_list)
     handle = Entrez.efetch(db="gene", retmode="xml", id=gene_ids)
     records = handle.read()
     handle.close()
-    #entrez_data = ET.fromstring(records.decode('ascii'))
     entrez_data = ET.iterparse(BytesIO(records), events=("end",))
 
     del gene_ids
@@ -131,13 +119,11 @@ def fetch_gene_info(gene_ids_list):
 
     return entrez_data
 
-
 def fetch_sequences(accession_ids_list):
     accession_ids = ','.join(accession_ids_list)
     handle = Entrez.efetch(db="nucleotide", rettype="fasta", retmode="xml", id=accession_ids)
     records = handle.read()
     handle.close()
-    #entrez_data = ET.fromstring(records.decode('ascii'))
     entrez_data = ET.iterparse(BytesIO(records), events=("end",))
 
     del accession_ids
@@ -146,38 +132,6 @@ def fetch_sequences(accession_ids_list):
     gc.collect()
 
     return entrez_data
-
-
-# def parse_gene_info(entrez_data):
-#     gene_info_list = []
-#     for gene in entrez_data:
-#         if gene.tag != 'Error':
-#             gene_info = GeneInfo()
-#             loci = gene.find('Entrezgene_locus')
-#             for locus in loci.iter('Gene-commentary'):
-#                 gene_locus = gene.find('Entrezgene_gene/Gene-ref/Gene-ref_locus-tag') # ******
-#                 accession = locus.find('Gene-commentary_accession')
-#                 version = locus.find('Gene-commentary_version')
-#                 descript = locus.find('Gene-commentary_products/Gene-commentary/Gene-commentary_label')
-#                 seqs_commentary = locus.find('Gene-commentary_seqs/Seq-loc/Seq-loc_int/Seq-interval')
-#                 if seqs_commentary != None and accession != None and version != None:
-#                     gene_info.accession_id = f'{accession.text}.{version.text}'
-#                     gene_info.start = int(seqs_commentary.find('Seq-interval_from').text)
-#                     gene_info.stop = int(seqs_commentary.find('Seq-interval_to').text)
-#                     if descript != None:
-#                         gene_info.gene_description = descript.text
-#                     if gene_locus != None:
-#                         gene_info.locus = gene_locus.text
-#                     break
-#                 else:
-#                     gene_info = GeneInfo()
-#         else:
-#             gene_info = GeneInfo()
-#             gene_info.locus = 'ERROR'
-#         gene_info_list.append(gene_info)
-#         entrez_data.clear() # I have no idea if this will work or just break things
-#     return gene_info_list
-
 
 def parse_gene_info(entrez_data):
     gene_info_list = []
@@ -209,21 +163,6 @@ def parse_gene_info(entrez_data):
             gene_info_list.append(gene_info)
     return gene_info_list
 
-
-# def parse_sequences(entrez_data, info_df):
-#     seq_list = []
-#     for i, seq in enumerate(entrez_data):
-#         info_entry = info_df.loc[[i]]
-#         seq_start = int(info_entry['start'])
-#         seq_stop = int(info_entry['stop']) + 1
-#         sequence = seq.find('TSeq_sequence').text
-#         if seq_start == 0 and seq_stop == 1:
-#             seq_list.append('BLANK')
-#         else:
-#             seq_list.append(sequence[seq_start:seq_stop])
-#     return seq_list
-    
-
 def parse_sequences(entrez_data, info_df):
     seq_list = []
     index = 0
@@ -247,7 +186,6 @@ def parse_sequences(entrez_data, info_df):
     gc.collect()
 
     return seq_list
-
 
 def is_parser(driver, wait_time, poll_freq, seq):
     url = "https://www-is.biotoul.fr/blast.php"
@@ -283,7 +221,6 @@ def is_parser(driver, wait_time, poll_freq, seq):
     gc.collect()
 
     return is_result
-
 
 def is_browser(seq_list):
     is_finder_results = []
@@ -343,7 +280,6 @@ def write_out(out_df, outfile):
             startrow = writer.sheets['Sheet1'].max_row
         )
 
-
 def process_chunks(aclame_id_chunk_list, aclame_to_geneid_df, outfile):
     for i, chunk in enumerate(aclame_id_chunk_list):
         print(f'Working on chunk: {i+1}')
@@ -383,19 +319,13 @@ def process_chunks(aclame_id_chunk_list, aclame_to_geneid_df, outfile):
         
         gc.collect()
 
-
 def main():
     args = parse_inputs()
-    infile = args.i
-    outfile = args.o
-    data_col = args.c
-    chunk_size = args.k
     Entrez.email = args.e
-    gen_xlsx(outfile)
-    aclame_id_chunk_list = gen_chunk_list(infile, data_col, chunk_size)
+    gen_xlsx(args.o)
+    aclame_id_chunk_list = gen_chunk_list(args.i, args.c, args.k)
     aclame_to_geneid_df = pd.read_parquet('aclame_genes_plasmids_0.4.parquet', engine='pyarrow', columns=['ACLAME ID', 'Cross-references'])
-    process_chunks(aclame_id_chunk_list, aclame_to_geneid_df, outfile)
-
+    process_chunks(aclame_id_chunk_list, aclame_to_geneid_df, args.o)
 
 if __name__ == '__main__':
     main()
