@@ -1,4 +1,4 @@
-*.xlsx
+*IS_finder_results.xlsx
 *.log
 *.csv
 .DS_Store
