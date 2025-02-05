@@ -1,8 +1,3 @@
-# conda install -c conda-forge geckodriver
-# conda install -c conda-forge firefox
-# binary path is then the conda env directory + /bin/FirefoxApp/Contents/MacOS/firefox-bin
-# /Users/johnny/opt/anaconda3/envs/genomics
-# Will probably need to set up conda anv for this step
 from Bio import Entrez
 import pandas as pd
 import math
@@ -20,6 +15,7 @@ from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import xml.etree.ElementTree as ET
 
+
 @dataclass
 class GeneInfo:
     accession_id:str = 'NR_182530.1'
@@ -27,6 +23,7 @@ class GeneInfo:
     stop:int = 0
     gene_description:str = ''
     locus:str = 'Manual'
+
 
 @dataclass
 class ISBrowserEntry:
@@ -37,6 +34,7 @@ class ISBrowserEntry:
     bits_score:str = ''
     e_value:str = ''
     final_call:str = 'UNCLASSIFIED'
+
 
 def parse_inputs():
     parser = argparse.ArgumentParser()
@@ -69,14 +67,16 @@ def parse_inputs():
     parser.add_argument(
         '-o',
         metavar = '--OUTFILE',
-        help = 'The column containing the ACLAME IDs',
+        help = 'The excel file containing the results of is_finder.py',
         default = 'IS_finder_results.xlsx'
     )
     return parser.parse_args()
 
+
 def divide_chunks(l, n):
     for i in range(0, len(l), n):
         yield l[i:i + n]
+
 
 def gen_xlsx(outfile):
     headers_df = pd.DataFrame(columns=[
@@ -98,12 +98,14 @@ def gen_xlsx(outfile):
     with pd.ExcelWriter(outfile, mode='w') as writer:
         headers_df.to_excel(writer, index=False)
     
+
 def gen_chunk_list(infile, data_col, chunk_size):
     telseq_df = pd.read_excel(infile)
     aclame_id_strings = [id_string for id_string in telseq_df.iloc[:, data_col]]
     aclame_id_chunk_list = list(divide_chunks(aclame_id_strings, chunk_size))
     print(f'Chunked {len(aclame_id_strings)} IDs into {len(aclame_id_chunk_list)} chunks')
     return aclame_id_chunk_list
+
 
 def fetch_gene_info(gene_ids_list):
     gene_ids = ','.join(gene_ids_list)
@@ -119,6 +121,7 @@ def fetch_gene_info(gene_ids_list):
 
     return entrez_data
 
+
 def fetch_sequences(accession_ids_list):
     accession_ids = ','.join(accession_ids_list)
     handle = Entrez.efetch(db="nucleotide", rettype="fasta", retmode="xml", id=accession_ids)
@@ -132,6 +135,7 @@ def fetch_sequences(accession_ids_list):
     gc.collect()
 
     return entrez_data
+
 
 def parse_gene_info(entrez_data):
     gene_info_list = []
@@ -163,14 +167,15 @@ def parse_gene_info(entrez_data):
             gene_info_list.append(gene_info)
     return gene_info_list
 
+
 def parse_sequences(entrez_data, info_df):
     seq_list = []
     index = 0
     for event, seq in entrez_data:
         if event == "end" and seq.tag == "TSeq_sequence":
             info_entry = info_df.loc[[index]]
-            seq_start = int(info_entry['start'])
-            seq_stop = int(info_entry['stop']) + 1
+            seq_start = info_entry['start'].iloc[0]
+            seq_stop = info_entry['stop'].iloc[0] + 1
             sequence = seq.text
             if seq_start == 0 and seq_stop == 1:
                 seq_list.append('BLANK')
@@ -186,6 +191,7 @@ def parse_sequences(entrez_data, info_df):
     gc.collect()
 
     return seq_list
+
 
 def is_parser(driver, wait_time, poll_freq, seq):
     url = "https://www-is.biotoul.fr/blast.php"
@@ -222,6 +228,7 @@ def is_parser(driver, wait_time, poll_freq, seq):
 
     return is_result
 
+
 def is_browser(seq_list):
     is_finder_results = []
 
@@ -231,9 +238,9 @@ def is_browser(seq_list):
         conda_path = subprocess.run(["powershell", "-Command", cmd], capture_output=True)
         binary_path = r'\bin\FirefoxApp\Contents\MacOS\firefox-bin'
     else:
-        cmd = "conda info --envs | grep 'genomics' | awk '{print $(NF)}'"
+        cmd = "conda info --envs | grep 'ifa' | awk '{print $(NF)}'"
         conda_path = subprocess.run([cmd], shell=True, capture_output=True).stdout.decode('ascii').strip()
-        binary_path = '/bin/FirefoxApp/Contents/MacOS/firefox-bin'
+        binary_path = '/bin/FirefoxApp/Contents/MacOS/firefox'
 
     firefox_options = FirefoxOptions()
     firefox_options.add_argument("--headless")
@@ -280,6 +287,7 @@ def write_out(out_df, outfile):
             startrow = writer.sheets['Sheet1'].max_row
         )
 
+
 def process_chunks(aclame_id_chunk_list, aclame_to_geneid_df, outfile):
     for i, chunk in enumerate(aclame_id_chunk_list):
         print(f'Working on chunk: {i+1}')
@@ -319,13 +327,31 @@ def process_chunks(aclame_id_chunk_list, aclame_to_geneid_df, outfile):
         
         gc.collect()
 
+
 def main():
     args = parse_inputs()
     Entrez.email = args.e
+    
     gen_xlsx(args.o)
-    aclame_id_chunk_list = gen_chunk_list(args.i, args.c, args.k)
-    aclame_to_geneid_df = pd.read_parquet('aclame_genes_plasmids_0.4.parquet', engine='pyarrow', columns=['ACLAME ID', 'Cross-references'])
-    process_chunks(aclame_id_chunk_list, aclame_to_geneid_df, args.o)
+    
+    aclame_id_chunk_list = gen_chunk_list(
+        infile = args.i,
+        data_col = args.c,
+        chunk_size = args.k
+    )
+
+    aclame_to_geneid_df = pd.read_parquet(
+        'aclame_genes_plasmids_0.4.parquet',
+        engine='pyarrow',
+        columns=['ACLAME ID', 'Cross-references']
+    )
+
+    process_chunks(
+        aclame_id_chunk_list = aclame_id_chunk_list,
+        aclame_to_geneid_df = aclame_to_geneid_df,
+        outfile = args.o
+    )
+
 
 if __name__ == '__main__':
     main()
